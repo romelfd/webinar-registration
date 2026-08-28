@@ -1,0 +1,41 @@
+#!/bin/bash
+# Runs once at instance boot. Installs the runtime only — application code is
+# deployed separately via SSM (see backend/scripts/deploy_remote.sh and
+# .github/workflows/deploy.yml), not baked in here, so redeploys don't
+# require replacing the instance.
+set -euxo pipefail
+
+dnf update -y
+dnf install -y nodejs npm nginx mariadb105-server git
+
+# --- MySQL-compatible database (MariaDB, same wire protocol) ---
+systemctl enable --now mariadb
+mysql -e "CREATE DATABASE IF NOT EXISTS webinar_registration;"
+mysql -e "CREATE USER IF NOT EXISTS 'webinar_app'@'localhost' IDENTIFIED BY 'CHANGE_ME_SEE_README';"
+mysql -e "GRANT ALL PRIVILEGES ON webinar_registration.* TO 'webinar_app'@'localhost'; FLUSH PRIVILEGES;"
+
+# --- process manager ---
+npm install -g pm2
+
+# --- app directory the deploy script writes into ---
+mkdir -p /opt/app
+useradd -r -s /sbin/nologin appuser || true
+chown appuser:appuser /opt/app
+
+# --- nginx reverse proxy: 80 -> Node API on 4000 ---
+cat > /etc/nginx/conf.d/webinar-app.conf <<'NGINX'
+server {
+    listen 80;
+    location / {
+        proxy_pass http://127.0.0.1:4000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+}
+NGINX
+rm -f /etc/nginx/conf.d/default.conf 2>/dev/null || true
+systemctl enable --now nginx
+systemctl restart nginx
+
+# Exports bucket name available to the deployed app as an env var.
+echo "EXPORTS_BUCKET=${exports_bucket}" >> /etc/environment

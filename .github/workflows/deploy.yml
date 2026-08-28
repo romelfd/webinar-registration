@@ -1,0 +1,132 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  id-token: write   # required to mint the OIDC token for AWS
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  DEPLOY_ROLE_ARN: arn:aws:iam::754947719052:role/webinar-registration-github-deploy
+
+jobs:
+  infra:
+    runs-on: ubuntu-latest
+    outputs:
+      instance_id: ${{ steps.tf_out.outputs.instance_id }}
+      instance_public_ip: ${{ steps.tf_out.outputs.instance_public_ip }}
+      exports_bucket: ${{ steps.tf_out.outputs.exports_bucket }}
+      frontend_bucket: ${{ steps.tf_out.outputs.frontend_bucket }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@v3
+
+      - name: terraform init
+        working-directory: infra
+        run: terraform init
+
+      - name: terraform apply
+        working-directory: infra
+        run: terraform apply -auto-approve
+
+      - id: tf_out
+        working-directory: infra
+        run: |
+          echo "instance_id=$(terraform output -raw instance_id)" >> "$GITHUB_OUTPUT"
+          echo "instance_public_ip=$(terraform output -raw instance_public_ip)" >> "$GITHUB_OUTPUT"
+          echo "exports_bucket=$(terraform output -raw exports_bucket)" >> "$GITHUB_OUTPUT"
+          echo "frontend_bucket=$(terraform output -raw frontend_bucket)" >> "$GITHUB_OUTPUT"
+
+  deploy-frontend:
+    needs: infra
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+        working-directory: frontend
+      - run: npm run build
+        working-directory: frontend
+        env:
+          # Using the raw EC2 IP keeps this demo dependency-free. In a real
+          # setup this would be a stable domain (e.g. via Route 53 + an ALB),
+          # since the IP changes if the instance is ever replaced.
+          NEXT_PUBLIC_API_BASE: http://${{ needs.infra.outputs.instance_public_ip }}
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Sync static export to S3
+        run: aws s3 sync frontend/out "s3://${{ needs.infra.outputs.frontend_bucket }}" --delete
+
+  deploy-backend:
+    needs: infra
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Package backend (exclude node_modules and .env)
+        run: |
+          mkdir -p /tmp/artifact
+          tar czf /tmp/artifact/backend.tar.gz \
+            --exclude=node_modules --exclude=.env -C backend .
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Upload artifact + deploy script to S3
+        run: |
+          KEY="deploy/backend-${{ github.sha }}.tar.gz"
+          aws s3 cp /tmp/artifact/backend.tar.gz "s3://${{ needs.infra.outputs.exports_bucket }}/$KEY"
+          # Uploading the deploy script itself alongside the artifact (rather
+          # than curling it from GitHub) means this works identically for a
+          # private repo — the instance only ever needs S3 access it already has.
+          aws s3 cp backend/scripts/deploy_remote.sh \
+            "s3://${{ needs.infra.outputs.exports_bucket }}/deploy/deploy_remote.sh"
+          echo "ARTIFACT_KEY=$KEY" >> "$GITHUB_ENV"
+
+      - name: Trigger remote deploy via SSM (no SSH)
+        run: |
+          CMD_ID=$(aws ssm send-command \
+            --instance-ids "${{ needs.infra.outputs.instance_id }}" \
+            --document-name "AWS-RunShellScript" \
+            --comment "Deploy ${{ github.sha }}" \
+            --parameters commands="[
+              'aws s3 cp s3://${{ needs.infra.outputs.exports_bucket }}/deploy/deploy_remote.sh /tmp/deploy_remote.sh',
+              'chmod +x /tmp/deploy_remote.sh',
+              '/tmp/deploy_remote.sh ${{ needs.infra.outputs.exports_bucket }} ${{ env.ARTIFACT_KEY }}'
+            ]" \
+            --query "Command.CommandId" --output text)
+          echo "SSM command: $CMD_ID"
+
+          # Poll until the remote script finishes, then fail the job if it did.
+          for i in $(seq 1 30); do
+            STATUS=$(aws ssm get-command-invocation \
+              --command-id "$CMD_ID" \
+              --instance-id "${{ needs.infra.outputs.instance_id }}" \
+              --query "Status" --output text 2>/dev/null || echo "Pending")
+            echo "status: $STATUS"
+            case "$STATUS" in
+              Success) exit 0 ;;
+              Failed|Cancelled|TimedOut) exit 1 ;;
+            esac
+            sleep 10
+          done
+          echo "Timed out waiting for deploy"; exit 1

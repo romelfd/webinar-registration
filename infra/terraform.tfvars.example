@@ -1,0 +1,9 @@
+# Copy to terraform.tfvars and fill in your own values. Do NOT commit
+# terraform.tfvars itself (it's already in .gitignore).
+
+aws_region    = "us-east-1"
+project_name  = "webinar-registration"
+my_ip_cidr    = "203.0.113.10/32"   # run `curl -s https://checkip.amazonaws.com` to find yours
+instance_type = "t3.micro"
+key_pair_name = "your-ec2-keypair-name"
+github_repo   = "your-github-username/webinar-registration"
