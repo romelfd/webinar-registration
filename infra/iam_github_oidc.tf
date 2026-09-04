@@ -72,9 +72,17 @@ resource "aws_iam_role_policy" "github_deploy_permissions" {
           "ec2:Describe*", "ec2:RunInstances", "ec2:TerminateInstances",
           "ec2:CreateTags", "ec2:*SecurityGroup*", "ec2:*Vpc*", "ec2:*Subnet*",
           "ec2:*RouteTable*", "ec2:*InternetGateway*",
-          "iam:GetRole", "iam:PassRole", "iam:*InstanceProfile*",
+          # iam:Get*/List* (rather than only the specific calls we knew we'd
+          # need) because `terraform plan`/`apply` re-reads every attribute
+          # of every managed resource on every run -- not just when creating
+          # something new -- and it's hard to predict every read-only IAM call
+          # involved in advance. Your local AWS credentials have full admin
+          # access, which is why this gap never showed up locally.
+          "iam:Get*", "iam:List*", "iam:PassRole", "iam:*InstanceProfile*",
+          "iam:*OpenIDConnectProvider*",
           "s3:CreateBucket", "s3:PutBucketPolicy", "s3:PutBucketWebsite",
-          "s3:PutBucketPublicAccessBlock",
+          "s3:PutBucketPublicAccessBlock", "s3:Get*",
+          "ssm:GetParameter", "ssm:GetParameters",
         ]
         Resource = "*"
       },
