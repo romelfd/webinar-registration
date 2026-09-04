@@ -72,6 +72,9 @@ resource "aws_iam_role_policy" "github_deploy_permissions" {
           "ec2:Describe*", "ec2:RunInstances", "ec2:TerminateInstances",
           "ec2:CreateTags", "ec2:*SecurityGroup*", "ec2:*Vpc*", "ec2:*Subnet*",
           "ec2:*RouteTable*", "ec2:*InternetGateway*",
+          # Needed to apply a user_data change on the running instance --
+          # AWS requires stop/modify/start to update it in place.
+          "ec2:StopInstances", "ec2:StartInstances", "ec2:ModifyInstanceAttribute",
           # iam:Get*/List* (rather than only the specific calls we knew we'd
           # need) because `terraform plan`/`apply` re-reads every attribute
           # of every managed resource on every run -- not just when creating
