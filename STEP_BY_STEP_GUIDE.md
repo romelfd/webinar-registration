@@ -97,7 +97,7 @@ This repo already contains a working backend (`backend/`) and frontend (`fronten
 # 1. Create the database and app user
 #    Windows/Docker: prefix this with `docker exec -it webinar-mysql` (see A0)
 #    Everyone else:  run it directly if you have the mysql CLI installed
-mysql -u root -e "
+docker exec -it webinar-mysql mysql -u root -e "
   CREATE DATABASE webinar_registration;
   CREATE USER 'webinar_app'@'localhost' IDENTIFIED BY 'devpass';
   GRANT ALL PRIVILEGES ON webinar_registration.* TO 'webinar_app'@'localhost';
@@ -130,7 +130,7 @@ npm run dev                # http://localhost:3000
 
 ```bash
 # One event, one low-capacity session, so you can see the waitlist logic trigger
-mysql -u webinar_app -pdevpass webinar_registration -e "
+docker exec -it webinar-mysql mysql -u webinar_app -pdevpass webinar_registration -e "
   INSERT INTO events (title, description, event_date)
     VALUES ('Thermo Fisher Innovation Webinar', 'Demo webinar', '2026-09-01 15:00:00');
   INSERT INTO sessions (event_id, name, capacity, starts_at)
@@ -140,8 +140,8 @@ mysql -u webinar_app -pdevpass webinar_registration -e "
 # Create an admin login (bcrypt-hash a password, then insert it)
 node -e "console.log(require('bcryptjs').hashSync('adminpass', 10))"
 # copy the output hash into the INSERT below
-mysql -u webinar_app -pdevpass webinar_registration -e "
-  INSERT INTO admins (email, password_hash) VALUES ('admin@example.com', 'PASTE_HASH_HERE');
+docker exec -it webinar-mysql mysql -u webinar_app -pdevpass webinar_registration -e "
+  INSERT INTO admins (email, password_hash) VALUES ('admin@example.com', '$2a$10$jZPxhZxWS8z5dzKx31Lx3OdiNvDWxqQSonwJXs6ijEYwdhLFki3rm');
 "
 ```
 
@@ -156,6 +156,8 @@ This is the part the JD is actually asking about — not "do you know a tool exi
 - **Test generation:** *"Generate node:test unit tests for this email-validation regex, including edge cases I might not have thought of."*
 - **Code review:** *"Review this Terraform security group for anything overly permissive before I apply it"* — paste `infra/security_groups.tf`.
 
+
+curl -X PATCH http://localhost:4000/api/admin/sessions/1/capacity -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOjEsImVtYWlsIjoiYWRtaW5AZXhhbXBsZS5jb20iLCJyb2xlIjoiYWRtaW4iLCJpYXQiOjE3ODgzMzI4NjUsImV4cCI6MTc4ODM2MTY2NX0.NsbBSpGAr4LnbHumCtLSgqZscEsg1EZTFrq4VB8klK8" -H "Content-Type: application/json" -d "{\"capacity\": 5}
 ---
 
 ## Part B — AWS Infrastructure with Terraform

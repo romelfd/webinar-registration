@@ -106,4 +106,57 @@ router.get("/admin/registrants/export.csv", requireAdmin, asyncHandler(async (re
   res.send([header, ...lines].join("\n"));
 }));
 
+
+// PATCH /api/admin/sessions/:id/capacity  { capacity }  (auth required)
+// Rejects if the new capacity would drop below the number of already-
+// confirmed registrants — you can't shrink capacity out from under people
+// who already have a confirmed seat.
+router.patch("/admin/sessions/:id/capacity", requireAdmin, asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { capacity } = req.body;
+
+  if (!Number.isInteger(capacity) || capacity < 0) {
+    return res.status(400).json({ error: "capacity must be a non-negative integer" });
+  }
+
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    const [sessionRows] = await conn.query(
+      "SELECT id, capacity FROM sessions WHERE id = :id FOR UPDATE",
+      { id }
+    );
+    const session = sessionRows[0];
+    if (!session) {
+      await conn.rollback();
+      return res.status(404).json({ error: "Session not found" });
+    }
+
+    const [[{ confirmedCount }]] = await conn.query(
+      `SELECT COUNT(*) AS confirmedCount FROM registrants
+       WHERE session_id = :id AND status = 'confirmed'`,
+      { id }
+    );
+
+    if (capacity < confirmedCount) {
+      await conn.rollback();
+      return res.status(400).json({
+        error: `capacity can't be less than ${confirmedCount} confirmed registrant(s)`,
+      });
+    }
+
+    await conn.query("UPDATE sessions SET capacity = :capacity WHERE id = :id", { id, capacity });
+    await conn.commit();
+
+    res.json({ id: Number(id), capacity, confirmedCount });
+  } catch (err) {
+    await conn.rollback();
+    throw err;
+  } finally {
+    conn.release();
+  }
+}));
+
+
 module.exports = router;

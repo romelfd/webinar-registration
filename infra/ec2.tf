@@ -17,5 +17,9 @@ resource "aws_instance" "app" {
     exports_bucket = aws_s3_bucket.exports.bucket
   })
 
+  lifecycle {
+    ignore_changes = [ami]
+  }
+
   tags = { Name = "${var.project_name}-app" }
 }
