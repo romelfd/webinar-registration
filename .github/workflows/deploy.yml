@@ -15,6 +15,14 @@ env:
 jobs:
   infra:
     runs-on: ubuntu-latest
+    env:
+      # terraform.tfvars is (correctly) gitignored and local-only, so CI needs
+      # its own source for the required variables that have no default.
+      # Set these once under Settings -> Secrets and variables -> Actions ->
+      # Variables (repo-level, not "Secrets" -- none of these are sensitive).
+      TF_VAR_my_ip_cidr: ${{ vars.TF_VAR_MY_IP_CIDR }}
+      TF_VAR_key_pair_name: ${{ vars.TF_VAR_KEY_PAIR_NAME }}
+      TF_VAR_github_repo: ${{ vars.TF_VAR_GITHUB_REPO }}
     outputs:
       instance_id: ${{ steps.tf_out.outputs.instance_id }}
       instance_public_ip: ${{ steps.tf_out.outputs.instance_public_ip }}
